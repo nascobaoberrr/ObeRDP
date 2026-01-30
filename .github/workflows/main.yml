@@ -1,0 +1,87 @@
+name: RDP Video + Anti-Idle
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 355  # 5 jam 55 menit (buffer)
+
+    steps:
+      # --- STEP 1-4: PERSIS VIDEO ---
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $password = "P@ssw0rd123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDPUser" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDPUser"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDPUser"
+          echo "RDP_USER=RDPUser" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile $env:TEMP\ts.msi
+          msiexec /i $env:TEMP\ts.msi /quiet /norestart
+          sleep 10
+
+      - name: Establish Tailscale Connection
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=gh-$env:GITHUB_RUN_ID
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      # --- STEP 5: ANTI-IDLE SCRIPT (TAMBAHAN) ---
+      - name: Setup Simple Anti-Idle
+        run: |
+          # Buat script keep-alive sederhana
+          echo "while (true) {" > C:\keepalive.ps1
+          echo "  echo [Keep-Alive] >> C:\alive.log" >> C:\keepalive.ps1
+          echo "  timeout /t 30 /nobreak > nul" >> C:\keepalive.ps1
+          echo "}" >> C:\keepalive.ps1
+          
+          # Buat batch file untuk user jalankan
+          echo "start /B powershell -WindowStyle Hidden -File C:\keepalive.ps1" > C:\start_keepalive.bat
+          echo "echo Keep-alive started!" >> C:\start_keepalive.bat
+
+      # --- STEP 6: TAMPILKAN INFO + KEEP WORKFLOW ALIVE ---
+      - name: Maintain Connection
+        run: |
+          echo "========================================"
+          echo "🟢 RDP READY (WITH ANTI-IDLE)"
+          echo "========================================"
+          echo "IP: $env:TAILSCALE_IP"
+          echo "User: $env:RDP_USER"
+          echo "Pass: $env:RDP_PASS"
+          echo "========================================"
+          echo "📌 SETELAH LOGIN KE RDP:"
+          echo "1. Buka Command Prompt"
+          echo "2. Jalankan: C:\start_keepalive.bat"
+          echo "3. Biarkan jendela tetap terbuka"
+          echo "========================================"
+          echo "⏳ Durasi: ~6 jam"
+          echo "========================================"
+          
+          # Keep workflow running (tidak pakai while true)
+          $start = Get-Date
+          $duration = 350  # 5 jam 50 menit dalam menit
+          
+          while (((Get-Date) - $start).TotalMinutes -lt $duration) {
+              $remaining = $duration - ((Get-Date) - $start).TotalMinutes
+              $hours = [math]::Floor($remaining / 60)
+              $minutes = [math]::Floor($remaining % 60)
+              echo "[$(Get-Date)] Masih jalan... $hours jam $minutes menit lagi"
+              Start-Sleep -Seconds 60
+          }
+          
+          echo "⏰ Waktu habis! Workflow selesai."
