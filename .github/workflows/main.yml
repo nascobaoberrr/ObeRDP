@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 355  # 5 jam 55 menit (buffer)
 
     steps:
-      # --- STEP 1: KONFIGURASI RDP ---
+      # --- STEP 1-4: PERSIS VIDEO ---
       - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -17,7 +17,6 @@ jobs:
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      # --- STEP 2: BUAT USER RDP ---
       - name: Create RDP User
         run: |
           $password = "P@ssw0rd123"
@@ -28,80 +27,21 @@ jobs:
           echo "RDP_USER=RDPUser" >> $env:GITHUB_ENV
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
-      # --- STEP 3: INSTALL TAILSCALE ---
       - name: Install Tailscale
         run: |
           iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile $env:TEMP\ts.msi
           msiexec /i $env:TEMP\ts.msi /quiet /norestart
           sleep 10
 
-      # --- STEP 4: TAILSCALE CONNECTION (DENGAN RETRY + HOSTNAME FIX) ---
       - name: Establish Tailscale Connection
         env:
-          TAILSCALE_AUTH_KEYS: ${{ secrets.TAILSCALE_AUTH_KEYS }}
+          TAILESCALE_AUTH_KEYS: ${{ secrets.TAILESCALE_AUTH_KEYS }}
         run: |
-          Write-Host "🚀 Starting Tailscale connection..."
-          
-          # Hostname yang valid (tanpa karakter aneh)
-          $hostname = "gh-runner-$env:GITHUB_RUN_ID"
-          Write-Host "📡 Hostname: $hostname"
-          
-          $maxRetries = 5
-          $retryDelay = 10
-          $connected = $false
-          
-          for ($i = 1; $i -le $maxRetries; $i++) {
-              Write-Host "`n🔄 Attempt $i of $maxRetries..."
-              
-              try {
-                  # Kill existing Tailscale process kalo ada
-                  Get-Process -Name "tailscale" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                  Start-Sleep -Seconds 2
-                  
-                  # Connect dengan timeout 60 detik
-                  $process = Start-Process -FilePath "C:\Program Files\Tailscale\tailscale.exe" `
-                      -ArgumentList "up --authkey=$env:TAILSCALE_AUTH_KEYS --hostname=$hostname --timeout=60s" `
-                      -Wait -PassThru -NoNewWindow
-                  
-                  if ($process.ExitCode -eq 0) {
-                      Write-Host "✅ Connected successfully!"
-                      $connected = $true
-                      break
-                  } else {
-                      Write-Host "⚠️ Exit code: $($process.ExitCode)"
-                  }
-              } catch {
-                  Write-Host "⚠️ Error: $_"
-              }
-              
-              if ($i -lt $maxRetries) {
-                  Write-Host "⏳ Waiting $retryDelay seconds before retry..."
-                  Start-Sleep -Seconds $retryDelay
-              }
-          }
-          
-          if (-not $connected) {
-              Write-Host "❌ Failed to connect after $maxRetries attempts"
-              
-              # Tampilkan debug info
-              Write-Host "`n🔍 Debug Info:"
-              Write-Host "Auth Key length: $($env:TAILSCALE_AUTH_KEYS.Length) characters"
-              Write-Host "Tailscale version:"
-              & "C:\Program Files\Tailscale\tailscale.exe" version
-              
-              exit 1
-          }
-          
-          # Verifikasi koneksi
-          Write-Host "`n🔍 Verifying connection..."
-          & "C:\Program Files\Tailscale\tailscale.exe" status
-          
-          # Dapatkan IP
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILESCALE_AUTH_KEYS --hostname=gh-$env:GITHUB_RUN_ID
           $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
-          Write-Host "`n✅ Tailscale IP: $ip"
 
-      # --- STEP 5: ANTI-IDLE SCRIPT ---
+      # --- STEP 5: ANTI-IDLE SCRIPT (TAMBAHAN) ---
       - name: Setup Simple Anti-Idle
         run: |
           # Buat script keep-alive sederhana
@@ -132,7 +72,7 @@ jobs:
           echo "⏳ Durasi: ~6 jam"
           echo "========================================"
           
-          # Keep workflow running
+          # Keep workflow running (tidak pakai while true)
           $start = Get-Date
           $duration = 350  # 5 jam 50 menit dalam menit
           
