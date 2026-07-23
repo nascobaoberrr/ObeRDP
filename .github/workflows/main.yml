@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 355  # 5 jam 55 menit (buffer)
 
     steps:
-      # --- STEP 1-4: PERSIS VIDEO ---
+      # --- STEP 1: KONFIGURASI RDP ---
       - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -17,6 +17,7 @@ jobs:
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
+      # --- STEP 2: BUAT USER RDP ---
       - name: Create RDP User
         run: |
           $password = "P@ssw0rd123"
@@ -27,21 +28,28 @@ jobs:
           echo "RDP_USER=RDPUser" >> $env:GITHUB_ENV
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
+      # --- STEP 3: INSTALL TAILSCALE ---
       - name: Install Tailscale
         run: |
           iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile $env:TEMP\ts.msi
           msiexec /i $env:TEMP\ts.msi /quiet /norestart
           sleep 10
 
+      # --- STEP 4: TAILSCALE CONNECTION PAKAI V4 (SUDAH DISEMPURNAKAN) ---
       - name: Establish Tailscale Connection
-        env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          hostname: gh-${{ github.run_id }}
+      
+      # --- STEP 5: DAPATKAN IP TAILSCALE ---
+      - name: Get Tailscale IP
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=gh-$env:GITHUB_RUN_ID
           $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+          echo "✅ Tailscale IP: $ip"
 
-      # --- STEP 5: ANTI-IDLE SCRIPT (TAMBAHAN) ---
+      # --- STEP 6: ANTI-IDLE SCRIPT ---
       - name: Setup Simple Anti-Idle
         run: |
           # Buat script keep-alive sederhana
@@ -54,7 +62,7 @@ jobs:
           echo "start /B powershell -WindowStyle Hidden -File C:\keepalive.ps1" > C:\start_keepalive.bat
           echo "echo Keep-alive started!" >> C:\start_keepalive.bat
 
-      # --- STEP 6: TAMPILKAN INFO + KEEP WORKFLOW ALIVE ---
+      # --- STEP 7: TAMPILKAN INFO + KEEP WORKFLOW ALIVE ---
       - name: Maintain Connection
         run: |
           echo "========================================"
@@ -72,7 +80,7 @@ jobs:
           echo "⏳ Durasi: ~6 jam"
           echo "========================================"
           
-          # Keep workflow running (tidak pakai while true)
+          # Keep workflow running
           $start = Get-Date
           $duration = 350  # 5 jam 50 menit dalam menit
           
